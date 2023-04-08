@@ -48,7 +48,7 @@ destroy_infrastructure:
 REGISTRY_ID = "$(shell cd ./terraform-infrastructure && AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) terraform output -raw registry-id)"
 
 install_kub:
-	cd ansible && ansible-playbook -i hosts-$(WORKSPACE).yml -e "workspace=$(WORKSPACE)" -e 'registry_id=$(REGISTRY_ID)' site.yml
+	@cd ansible && ansible-playbook -i hosts-$(WORKSPACE).yml -e "workspace=$(WORKSPACE)" -e 'registry_id=$(REGISTRY_ID)' -e 'bucket_access_key=$(ACCESS_KEY)' -e 'bucket_secret_key=$(SECRET_KEY)' site.yml --tags=atlantis
 
 create: create_bucket create_workspaces create_infrastructure install_kub
 

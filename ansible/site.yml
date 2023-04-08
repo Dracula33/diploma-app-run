@@ -423,16 +423,91 @@
         - qbec
 
 - name: run atlantis
-  hosts: localhost
+  hosts: cicd-server
   tags: atlantis
   tasks:
 
     - name: create secret
       shell: >
+        kubectl delete secret atlantis-config --ignore-not-found=true --kubeconfig=/tmp/admin.conf && 
         kubectl create secret generic atlantis-config --kubeconfig=/tmp/admin.conf
         --from-literal=USER=dracula33
-        --from-literal=TOKEN=$(echo $TOKEN) 
-        --from-literal=YC_CLOUD_ID=$(echo $YC_CLOUD_ID) 
-        --from-literal=YC_FOLDER_ID=$(echo $YC_FOLDER_ID)
-        --from-literal=YC_SERVICE_ACCOUNT_KEY_FILE=/home/key.json 
-        --from-file=key.json=$YC_SERVICE_ACCOUNT_KEY_FILE
+        --from-literal=TOKEN=$GH_TOKEN
+        --from-literal=YC_CLOUD_ID=$YC_CLOUD_ID
+        --from-literal=YC_FOLDER_ID=$YC_FOLDER_ID
+        --from-literal=YC_SERVICE_ACCOUNT_KEY_FILE=/cloudkey/key.json 
+        --from-file=key.json=$YC_SERVICE_ACCOUNT_KEY_FILE 
+        --from-literal=AWS_ACCESS_KEY_ID={{ bucket_access_key }}
+        --from-literal=AWS_SECRET_ACCESS_KEY={{ bucket_secret_key }}
+      delegate_to: localhost
+
+    - name: install helm
+      get_url:
+        url: https://get.helm.sh/helm-v3.11.2-linux-amd64.tar.gz
+        dest: /tmp/
+
+    - name: unarchive helm
+      unarchive:
+        remote_src: true
+        src: /tmp/helm-v3.11.2-linux-amd64.tar.gz
+        dest: /tmp
+
+    - name: copy to PATH
+      become: true
+      copy:
+        remote_src: true
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/sbin/
+        mode: 0755
+
+#    - name: add repo
+#      become_user: "{{ user_name }}"
+#      kubernetes.core.helm_repository:
+#        name: runatlantis
+#        repo_url: "https://runatlantis.github.io/helm-charts"
+
+    - name: create Values.yaml for atlantis
+      become: true
+      template:
+        src: atlantis/atlantis_values.yaml.j2
+        dest: /home/jenkins/atlantis_values.yaml
+        owner: "{{ user_name }}"
+        group: "{{ user_group }}"
+
+    - name: install atlantis
+      become: true
+      become_user: "{{ user_name }}"
+      shell:
+        cmd: |
+          /usr/local/sbin/helm repo add runatlantis https://runatlantis.github.io/helm-charts
+          /usr/local/sbin/helm upgrade --install atlantis runatlantis/atlantis -f /home/jenkins/atlantis_values.yaml
+
+#      kubernetes.core.helm:
+#        name: atlantis
+#        chart_ref: runatlantis/atlantis
+#        release_namespace: default
+#        create_namespace: false
+#        update_repo_cache: true
+#        values_files:
+#          - /home/jenkins/atlantis_values.yaml
+
+    - name: get atlantis port
+      shell:
+        cmd: kubectl get service atlantis -o json --kubeconfig=/tmp/admin.conf | jq ".spec.ports[0].nodePort"
+      register: atlantis_node_port
+      delegate_to: localhost
+
+    - name: set webhook
+      community.general.github_webhook:
+        repository: dracula33/diploma-app-run
+        content_type: json
+        secret: "{{ lookup('env','GH_WEBHOOK_SECRET') }}"
+        token: "{{ lookup('env','GH_TOKEN') }}"
+        user: dracula33
+        url: http://{{ hostvars['control-plane']['ansible_host'] }}:{{ atlantis_node_port['stdout'] }}/events
+        events:
+          - push
+          - issue_comment
+          - pull_request
+          - pull_request_review
+      delegate_to: localhost

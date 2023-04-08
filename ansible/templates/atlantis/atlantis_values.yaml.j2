@@ -1,9 +1,10 @@
 
 orgAllowlist: github.com/Dracula33/*
 
-github: {}
-#github:
-#  user: dracula33
+github:
+  user: dracula33
+  token: {{ lookup('env', 'GH_TOKEN') }}
+  secret: {{ lookup('env', 'GH_WEBHOOK_SECRET') }}
 
 serviceAccountSecrets:
 
@@ -157,7 +158,7 @@ extraVolumes:
 
 extraVolumeMounts:
 - name: key
-  mountPath: /home/
+  mountPath: /cloudkey
 - name: atlantis-data
   mountPath: /atlantis-data
 
@@ -165,9 +166,7 @@ extraManifests: []
 
 initContainers: []
 
-extraArgs:
-- --gh-user=$USER
-- --gh-token=$TOKEN
+extraArgs: {}
 
 extraContainers: []
 
