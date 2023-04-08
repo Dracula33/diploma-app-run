@@ -511,3 +511,8 @@
           - pull_request
           - pull_request_review
       delegate_to: localhost
+
+    - name: add key
+      shell:
+        cmd: kubectl cp ~/.ssh/id_rsa.pub atlantis-0:/home/atlantis/.ssh/ --kubeconfig=/tmp/admin.conf
+      delegate_to: localhost
