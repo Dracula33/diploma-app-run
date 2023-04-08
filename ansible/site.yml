@@ -514,5 +514,7 @@
 
     - name: add key
       shell:
-        cmd: kubectl cp ~/.ssh/id_rsa.pub atlantis-0:/home/atlantis/.ssh/ --kubeconfig=/tmp/admin.conf
+        cmd: |
+          kubectl exec atlantis-0 --kubeconfig=/tmp/admin.conf -- bash -c 'mkdir /home/atlantis/.ssh'
+          kubectl cp ~/.ssh/id_rsa.pub atlantis-0:/home/atlantis/.ssh/id_rsa.pub --kubeconfig=/tmp/admin.conf
       delegate_to: localhost
