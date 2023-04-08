@@ -1,0 +1,19 @@
+apiVersion: qbec.io/v1alpha1
+kind: App
+metadata:
+  name: qbec-diploma-app
+spec:
+  environments:
+    stage:
+      defaultNamespace: default
+      server: https://{{ hostvars['control-plane']['ansible_host'] }}:6443
+    prod:
+      defaultNamespace: default
+      server: https://{{ hostvars['control-plane']['ansible_host'] }}:6443
+  vars:
+    external:
+      - name: app_image_name
+        default: "my-diploma-application"
+
+      - name: app_image_tag
+        default: latest

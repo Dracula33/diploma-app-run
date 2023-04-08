@@ -1,0 +1,196 @@
+
+orgAllowlist: github.com/Dracula33/*
+
+github: {}
+#github:
+#  user: dracula33
+
+serviceAccountSecrets:
+
+image:
+  repository: dracula33/atlantis
+  tag: "0.1"
+  pullPolicy: IfNotPresent
+
+repoConfig: |
+  repos:
+    - id: /github.com/dracula33/diploma-app-run
+      allow_custom_workflows: true
+      workflow: custom
+  workflows:
+    custom:
+      plan:
+        steps:
+          - run: echo INIT
+          - init
+          - run: echo PLAN
+          - plan:
+              extra_args: ["-lock", "false"]
+      apply:
+        steps:
+          - run: echo APPLY
+          - apply
+
+allowForkPRs: false
+
+allowDraftPRs: false
+
+hidePrevPlanComments: false
+
+disableApply: false
+
+disableApplyAll: false
+
+disableRepoLocking: false
+
+enableDiffMarkdownFormat: false
+
+commonLabels: {}
+
+livenessProbe:
+  enabled: true
+  periodSeconds: 60
+  initialDelaySeconds: 5
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 5
+  scheme: HTTP
+readinessProbe:
+  enabled: true
+  periodSeconds: 60
+  initialDelaySeconds: 5
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 5
+  scheme: HTTP
+
+service:
+  type: NodePort
+  port: 80
+  targetPort: 4141
+  loadBalancerIP: null
+
+podTemplate:
+  annotations: {}
+  labels: {}
+
+statefulSet:
+  annotations: {}
+  labels: {}
+  securityContext:
+    fsGroup: 1000
+    runAsUser: 100
+    fsGroupChangePolicy: "OnRootMismatch"
+  priorityClassName: ""
+  updateStrategy: {}
+  shareProcessNamespace: false
+
+ingress:
+  enabled: true
+  ingressClassName:
+  annotations: {}
+  path: /*
+  pathType: ImplementationSpecific
+  host:
+
+  hosts:
+  tls: []
+  labels: {}
+
+resources:
+  requests:
+    memory: 1Gi
+    cpu: 100m
+  limits:
+    memory: 1Gi
+    cpu: 100m
+
+volumeClaim:
+  enabled: false
+  dataStorage: 1Gi
+
+replicaCount: 1
+
+test:
+  enabled: true
+  image: lachlanevenson/k8s-kubectl
+  imageTag: v1.4.8-bash
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+topologySpreadConstraints: []
+
+serviceAccount:
+  create: true
+  mount: true
+  name:
+  annotations: {}
+
+enableKubernetesBackend: false
+
+environment: {}
+
+environmentSecrets: []
+
+environmentRaw: []
+
+loadEnvFromSecrets:
+  - atlantis-config
+
+loadEnvFromConfigMaps: []
+
+googleServiceAccountSecrets: []
+
+extraVolumes:
+- name: key
+  secret:
+    secretName: atlantis-config
+    items:
+      - key: key.json
+        path: key.json
+- name: atlantis-data
+  emptyDir: {}
+
+extraVolumeMounts:
+- name: key
+  mountPath: /home/
+- name: atlantis-data
+  mountPath: /atlantis-data
+
+extraManifests: []
+
+initContainers: []
+
+extraArgs:
+- --gh-user=$USER
+- --gh-token=$TOKEN
+
+extraContainers: []
+
+containerSecurityContext: {}
+
+servicemonitor:
+  enabled: false
+  interval: "30s"
+  auth:
+    basicAuth:
+      enabled: false
+    externalSecret:
+      enabled: false
+      name: atlantis-env
+      keys:
+        username: USERNAME
+        password: ATLANTIS_WEB_PASSWORD
+
+podMonitor:
+  enabled: false
+  interval: "30s"
+
+redis: {}
+
+lifecycle: {}
+

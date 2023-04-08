@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: additional-scrape-configs
+  namespace: monitoring
+stringData:
+  add-job.yaml: |
+    - job_name: 'diploma-http'
+      scrape_timeout: 15s
+      scrape_interval: 15s
+      metrics_path: /probe
+      params:
+        module: [http_2xx]
+      static_configs:
+       - targets:
+          - my-diploma-service.default
+      relabel_configs:
+       - source_labels: [__address__]
+         target_label: __param_target
+       - source_labels: [__param_target]
+         target_label: instance
+       - target_label: __address__
+         replacement: blackbox-exporter.monitoring:19115

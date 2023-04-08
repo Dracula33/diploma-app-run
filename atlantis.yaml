@@ -1,0 +1,10 @@
+version: 3
+projects:
+- dir: "/terraform-infrastructure"
+  workspace: stage
+- dir: "/terraform-infrastructure"
+  workspace: prod
+
+  autoplan:
+    when_modified: ["*.tf"]
+    enabled: true

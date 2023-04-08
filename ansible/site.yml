@@ -1,0 +1,438 @@
+---
+- name: prepare control-plane
+  hosts: control-plane
+  tasks:
+
+  - name: install utilities
+    become: true
+    apt:
+      name: "{{ item }}"
+      update_cache: true
+    loop:
+      - git
+      - python3-pip
+
+  - name: clone kubespray
+    git:
+      repo: https://github.com/kubernetes-sigs/kubespray.git
+      dest: ~/kubespray
+
+  - name: install requirements
+    pip:
+      requirements: ~/kubespray/requirements.txt
+
+  - name: copy inventory
+    copy:
+      src: ./hosts-{{ workspace }}.yml
+      dest: ~/kubespray/hosts.yml
+
+  - name: generate ssh keys
+    shell: ssh-keygen -q -f ~/.ssh/id_rsa -N ''
+    args:
+      creates: ~/.ssh/id_rsa
+
+  - name: copy ssh pub from server
+    fetch:
+      src: ~/.ssh/id_rsa.pub
+      dest: "/tmp/"
+      flat: yes
+
+- name: some tasks for all hosts
+  hosts: k8s_cluster
+  tasks:
+
+  - name: add pubkey for all hosts
+    authorized_key:
+      user: "{{ ansible_user }}"
+      state: present
+      key: "{{ lookup('file', '/tmp/id_rsa.pub') }}"
+
+- name: run kubespray
+  hosts: control-plane
+  tags: kubespray
+  tasks:
+
+  - name: run kubespray
+    shell:
+      cmd: ansible-playbook -b -i hosts.yml -e '{"supplementary_addresses_in_ssl_keys":["{{ hostvars['control-plane']['ansible_host'] }}"]}' cluster.yml > install.log 2>&1
+      chdir: /home/ubuntu/kubespray
+      creates: install.log
+      executable: /bin/bash
+    environment:
+      PATH: "/home/ubuntu/.local/bin:{{ ansible_env.PATH }}"
+
+- name: prepare kubectl
+  hosts: control-plane
+  tags: get_kubeconf
+  tasks:
+    - name: get admin.conf
+      become: true
+      fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: /tmp/admin.conf
+        flat: true
+
+    - name: replace IP
+      replace:
+        path: /tmp/admin.conf
+        regexp: "127.0.0.1"
+        replace: "{{ hostvars['control-plane']['ansible_host'] }}"
+      delegate_to: localhost
+
+    - name: test kubectl config
+      shell: kubectl get nodes --kubeconfig=/tmp/admin.conf
+      delegate_to: localhost
+      register: kubectl_output
+
+    - debug: var=kubectl_output.stdout_lines
+
+- name: deploy monitoring
+  hosts: localhost
+  tags: monitoring
+  tasks:
+    - name: clone prometheus-operator
+      git:
+        dest: /tmp/prometheus-operator
+        repo: https://github.com/prometheus-operator/kube-prometheus.git
+
+    - name: copy changed manifests
+      copy:
+        src: monitoring/
+        dest: /tmp/prometheus-operator/manifests
+      delegate_to: localhost
+
+    - name: deploy monitoring
+      shell:
+        cmd: |
+          rm -f /tmp/prometheus-operator/manifests/*-networkPolicy.yaml
+          kubectl apply --server-side -f /tmp/prometheus-operator/manifests/setup --kubeconfig=/tmp/admin.conf
+          kubectl wait --for condition=Established --all CustomResourceDefinition --namespace=monitoring --kubeconfig=/tmp/admin.conf
+          kubectl apply -f /tmp/prometheus-operator/manifests/ --kubeconfig=/tmp/admin.conf
+
+- name: Preapre all hosts
+  hosts: cicd-server
+  tags: jenkins
+  tasks:
+    - name: Create group
+      become: true
+      group:
+        name: "{{ user_group }}"
+        state: present
+
+    - name: Create user
+      become: true
+      user:
+        name: "{{ user_name }}"
+        generate_ssh_key: true
+      register: ssh_key_info
+
+    - name: Install JDK
+      become: true
+      package:
+        name: "{{ java_packages }}"
+        state: present
+
+- name: Get Jenkins master installed
+  hosts: cicd-server
+  tags: jenkins
+  tasks:
+
+    - name: Get repo Jenkins
+      become: true
+      get_url:
+        url: https://pkg.jenkins.io/redhat-stable/jenkins.repo
+        dest: /etc/yum.repos.d/jenkins.repo
+        validate_certs: false
+
+    - name: Add Jenkins key
+      become: true
+      rpm_key:
+        #key: https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+        key: https://pkg.jenkins.io/redhat/jenkins.io-2023.key
+        state: present
+        validate_certs: false
+
+    - name: Install epel-release
+      become: true
+      yum:
+        name: epel-release
+        state: present
+
+    - name: Install Jenkins and requirements
+      become: true
+      yum:
+        name:
+          - jenkins
+          - git
+        state: present
+      register: jenkins_installed
+
+    - name: Start Jenkins
+      become: true
+      systemd:
+        name: jenkins
+        state: restarted
+        enabled: true
+        daemon_reload: true
+      when: jenkins_installed is changed
+
+    - name: save code
+      become: true
+      shell: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_code
+
+    - name: print code
+      debug:
+        var: jenkins_code.stdout
+
+    - name: unlock jenkins
+      become: true
+      replace:
+        path: /usr/lib/systemd/system/jenkins.service
+        regexp: '^Environment="JAVA_OPTS=-Djava'
+        replace: 'Environment="JAVA_OPTS=-Djenkins.install.runSetupWizard=false -Djava'
+
+    - name: Restart Jenkins
+      become: true
+      systemd:
+        name: jenkins
+        state: restarted
+        enabled: true
+        daemon_reload: true
+
+- name: install docker
+  hosts: cicd-server
+  tags: docker
+  tasks:
+
+    - name: Add docker repo
+      become: true
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+        validate_certs: false
+
+    - name: Install some required
+      become: true
+      yum:
+        update_cache: true
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+#    - name: Add local to PATH
+#      lineinfile:
+#        dest: ~/.bashrc
+#        regexp: export PATH=$PATH:/home/jenkins/.local/bin
+#        line: export PATH=$PATH:/home/jenkins/.local/bin
+
+    - name: Create docker group
+      become: true
+      group:
+        name: docker
+        state: present
+
+    - name: Add jenkinsuser to dockergroup
+      become: true
+      user:
+        name: "{{ jenkins_user_name }}"
+        groups: docker
+
+    - name: Restart docker
+      become: true
+      systemd:
+        name: docker
+        state: restarted
+        enabled: true
+
+- name: install jenkins plugins
+  hosts: cicd-server
+  tags: plugins
+  tasks:
+
+    - name: save code
+      become: true
+      shell: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_code
+
+    - name: install pipeline
+      jenkins_plugin:
+        name: "{{ item }}"
+        state: present
+        url_username: admin
+        url_password: "{{ jenkins_code.stdout }}"
+        timeout: 90
+      loop:
+      - workflow-aggregator
+      - git
+      - workflow-cps
+      - remote-file
+
+    - name: install other plugin
+      become: true
+      copy:
+        src: build-everything-strategy.hpi
+        dest: /var/lib/jenkins/plugins/
+        group: "{{ user_group  }}"
+        owner: "{{ user_name  }}"
+
+    - name: Restart Jenkins
+      become: true
+      systemd:
+        name: jenkins
+        state: restarted
+
+- name: copy jenkins job
+  hosts: cicd-server
+  tags: job
+  tasks:
+
+    - name: create registry file
+      become: true
+      copy:
+        dest: /home/jenkins/registry_id.txt
+        content: "{{ registry_id }}"
+        group: "{{ user_group  }}"
+        owner: "{{ user_name  }}"
+
+    - name: create workspace file
+      become: true
+      copy:
+        dest: /home/jenkins/workspace.txt
+        content: "{{ workspace }}"
+        group: "{{ user_group  }}"
+        owner: "{{ user_name  }}"
+
+    - name: copy job
+      become: true
+      copy:
+        src: my_cicd
+        dest: /var/lib/jenkins/jobs/
+        group: "{{ user_group  }}"
+        owner: "{{ user_name  }}"
+
+#    - name: create dir
+#      become: true
+#      file:
+#        path: /var/lib/jenkins/jobs/my_cicd
+#        state: directory
+#        group: "{{ user_group  }}"
+#        owner: "{{ user_name  }}"
+
+#    - name: copy job
+#      become: true
+#      template:
+#        src: my_cicd/config.xml.j2
+#        dest: /var/lib/jenkins/jobs/my_cicd/config.xml
+#        group: "{{ user_group  }}"
+#        owner: "{{ user_name  }}"
+
+    - name: Restart Jenkins
+      become: true
+      systemd:
+        name: jenkins
+        state: restarted
+
+- name: setup kubectl
+  hosts: cicd-server
+  tags: kubectl
+  tasks:
+
+    - name: download kubectl
+      become: true
+      get_url:
+        url: https://storage.googleapis.com/kubernetes-release/release/v1.26.3/bin/linux/amd64/kubectl
+        dest: /usr/local/sbin/
+        mode: 0755
+
+    - name: create .kube
+      become: true
+      file:
+        dest: /home/jenkins/.kube
+        state: directory
+        group: "{{ user_group  }}"
+        owner: "{{ user_name  }}"
+
+    - name: copy kubeconfig
+      become: true
+      copy:
+        src: /tmp/admin.conf
+        dest: /home/jenkins/.kube/config
+        owner: "{{ user_name }}"
+        group: "{{ user_group }}"
+
+#    - name: copy manifests
+#      become: true
+#      copy:
+#        src: manifests
+#        dest: /home/jenkins/
+#        owner: "{{ user_name }}"
+#        group: "{{ user_group }}"
+
+#    - name: copy manifests templates
+#      become: true
+#      template:
+#        src: manifests/pods.yaml.j2
+#        dest: /home/jenkins/manifests/pods.yaml
+#        owner: "{{ user_name }}"
+#        group: "{{ user_group }}"
+
+    - name: copy qbec config
+      become: true
+      copy:
+        src: qbec-app
+        dest: /home/jenkins/
+        owner: "{{ user_name }}"
+        group: "{{ user_group }}"
+
+    - name: copy qbec templates
+      become: true
+      template:
+        src: qbec-app/qbec.yaml.j2
+        dest: /home/jenkins/qbec-app/qbec.yaml
+        owner: "{{ user_name }}"
+        group: "{{ user_group }}"
+
+- name: install qbec
+  hosts: cicd-server
+  tags: qbec
+  tasks:
+
+    - name: download qbec
+      get_url:
+        url: https://github.com/splunk/qbec/releases/download/v0.15.2/qbec-linux-amd64.tar.gz
+        dest: /tmp/
+
+    - name: unarchive qbec
+      unarchive:
+        src: /tmp/qbec-linux-amd64.tar.gz
+        dest: /tmp/
+        remote_src: true
+
+    - name: copy to PATH
+      become: true
+      copy:
+        src: /tmp/{{ item }}
+        dest: /usr/local/sbin/
+        remote_src: true
+        mode: 0755
+      loop:
+        - jsonnet-qbec
+        - qbec
+
+- name: run atlantis
+  hosts: localhost
+  tags: atlantis
+  tasks:
+
+    - name: create secret
+      shell: >
+        kubectl create secret generic atlantis-config --kubeconfig=/tmp/admin.conf
+        --from-literal=USER=dracula33
+        --from-literal=TOKEN=$(echo $TOKEN) 
+        --from-literal=YC_CLOUD_ID=$(echo $YC_CLOUD_ID) 
+        --from-literal=YC_FOLDER_ID=$(echo $YC_FOLDER_ID)
+        --from-literal=YC_SERVICE_ACCOUNT_KEY_FILE=/home/key.json 
+        --from-file=key.json=$YC_SERVICE_ACCOUNT_KEY_FILE
