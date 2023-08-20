@@ -16,6 +16,7 @@
     git:
       repo: https://github.com/kubernetes-sigs/kubespray.git
       dest: ~/kubespray
+      version: v2.22.0
 
   - name: install requirements
     pip:
@@ -334,6 +335,31 @@
       systemd:
         name: jenkins
         state: restarted
+
+- name: create jenkins kubeconfig
+  hosts: localhost
+  tags: cicdkubeconfig
+  tasks:
+
+    - name: deploy jenkins sa
+      shell:
+        cmd: kubectl apply -f files/cicd-manifests --kubeconfig=/tmp/admin.conf
+
+    - name: create backup
+      shell: cp /tmp/admin.conf /tmp/admin.conf.bak
+
+    - name: create kubeconfig
+      shell:
+        cmd: |
+          JENKINS_TOKEN=$(kubectl create token jenkins --kubeconfig=/tmp/admin.conf)
+          kubectl config set-credentials jenkins --token=$JENKINS_TOKEN --kubeconfig=/tmp/admin.conf
+          kubectl config set-context jenkins --cluster=cluster.local --user=jenkins --kubeconfig=/tmp/admin.conf
+          kubectl config use-context jenkins --kubeconfig=/tmp/admin.conf
+          kubectl config delete-user kubernetes-admin --kubeconfig=/tmp/admin.conf
+          kubectl config delete-context kubernetes-admin@cluster.local --kubeconfig=/tmp/admin.conf
+
+    - name: restore backup
+      shell: mv /tmp/admin.conf.bak /tmp/admin.conf
 
 - name: setup kubectl
   hosts: cicd-server

@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-ci-for-diplomapp
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: jenkins
+roleRef:
+  kind: Role
+  name: ci-for-diplomapp
+  apiGroup: rbac.authorization.k8s.io

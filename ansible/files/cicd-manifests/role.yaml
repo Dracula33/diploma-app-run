@@ -1,0 +1,9 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: default
+  name: ci-for-diplomapp
+rules:
+- apiGroups: ["*"]
+  resources: ["services", "deployments"]
+  verbs: ["get", "watch", "list", "create", "update", "delete"]
